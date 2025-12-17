@@ -1,0 +1,51 @@
+# Scala gitignore
+
+# Compiled class files
+*.class
+*.jar
+*.war
+*.ear
+# Scala build tool directories
+target/
+project/target/
+project/project/
+# SBT specific
+.cache/
+lib_managed/
+src_managed/
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+# Eclipse
+.metadata/
+bin/
+.settings/
+# VS Code
+.vscode/
+# MacOS
+.DS_Store
+# Logs
+logs/
+*.log
+# Temporary files
+*.tmp
+*.swp
+# Coverage reports
+coverage/
+*.cover
+# Generated files
+doc/
+docs/
+# Misc
+*.class
+*.log
+*.out
+*.rej
+*.orig
+
+# Metals files
+.metals/
+.scala-build/
+.bloop/
+.bsp
