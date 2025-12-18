@@ -69,6 +69,9 @@ object WorkHoursAnalyzer:
       val minutes = workDuration % 60
       (hours, minutes)
 
+    infix def < (other: Shift): Boolean =
+      this.startTime < other.startTime
+
   end Shift
   object Shift:
     /**
@@ -114,8 +117,11 @@ object WorkHoursAnalyzer:
           else
             tempEndTime
 
-          assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
-          Some(Shift(typ, startTime, Some(breakStartTime), Some(breakEndTime), endTime))
+          if DateTime.timeDifferenceMinutes(startTime, endTime) > 24 * 60 then
+            None
+          else
+            assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
+            Some(Shift(typ, startTime, Some(breakStartTime), Some(breakEndTime), endTime))
         case start :: endLine :: Nil =>
           assert(start.startsWith("IN") && endLine.startsWith("OUT"))
           val startTime = parseDateTime(start)
@@ -128,11 +134,18 @@ object WorkHoursAnalyzer:
           else
             tempEndTime
 
-          assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
-          Some(Shift(typ, startTime, None, None, endTime))
+          if DateTime.timeDifferenceMinutes(startTime, endTime) > 24 * 60 then
+            None
+          else
+            assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
+            Some(Shift(typ, startTime, None, None, endTime))
         case _ => None
 
-  case class MonthlyWorkReport(shifts: List[Shift]):
+  
+  case class MonthlyWorkReport(month: Int, shifts: List[Shift]):
+    given ord: Ordering[Shift] = Ordering.fromLessThan(_ < _)
+    require(1 <= month && month <= 12, "Month must be between 1 and 12")
+    require(shifts.sorted == shifts, "Shifts must be sorted by start time")
     /**
       * Calculate the total work hours and minutes for the month.
       *
@@ -165,12 +178,105 @@ object WorkHoursAnalyzer:
         s"${shift.dayOfMonth},${shift.typ},${f"${shift.startTime.getHour}%02d:${shift.startTime.getMinute}%02d"},$breakStartStr,$breakEndStr,${f"${shift.endTime.getHour}%02d:${shift.endTime.getMinute}%02d"},${f"$workHours%02d:$workMinutes%02d"}"
       }
       header + lines.mkString("\n")
+
+    def ++(other: MonthlyWorkReport): MonthlyWorkReport =
+      require(this.month == other.month, "Cannot combine MonthlyWorkReports of different months")
+      require((this.shifts.isEmpty || other.shifts.isEmpty) || this.shifts.last.startTime < other.shifts.head.startTime, "Shifts in the two MonthlyWorkReports must not overlap in days")
+      MonthlyWorkReport(this.month, this.shifts ++ other.shifts)
+
+    def append(shift: Shift): MonthlyWorkReport =
+      require((if shifts.isEmpty then true else shifts.last < shift), "New shift must start after the last shift in the report")
+      MonthlyWorkReport(this.month, this.shifts :+ shift)
   end MonthlyWorkReport
+
+  object MonthlyWorkReport:
+    /**
+      * parse from one line IN 17 déc. 2025 à 07:30
+      *
+      * @param l
+      * @return
+      */
+    def parseMonth(l: String): Int =
+      
+      val parts = l.split(" ")
+      val monthStr = parts(2)
+      monthStr match
+        case "janv." => 1
+        case "févr." => 2
+        case "mars"  => 3
+        case "avr."  => 4
+        case "mai"   => 5
+        case "juin"  => 6
+        case "juil." => 7
+        case "août"  => 8
+        case "sept." => 9
+        case "oct."  => 10
+        case "nov."  => 11
+        case "déc."  => 12
+        case _       => throw new IllegalArgumentException(s"Unknown month: $monthStr")
+
+    
+    private def parse(ls: List[String], acc: MonthlyWorkReport): MonthlyWorkReport =
+      require(ls.forall(line => line.startsWith("IN") || line.startsWith("OUT")), "All lines must start with IN or OUT")
+      require(ls.forall(line =>parseMonth(line) == acc.month), "All lines must belong to the same month")
+      // Algo: if more than 4 lines left, try to parse 4 lines, if fails, try to parse 2 lines
+      ls match
+        case l1 :: l2 :: l3 :: l4 :: tail => 
+          Shift.parse(List(l1, l2, l3, l4)) match
+            case Some(shift) =>
+              parse(tail, acc.append(shift))
+            case None =>
+              // Try parsing 2 lines
+              Shift.parse(List(l1, l2)) match
+                case Some(shift2) =>
+                  parse(l3 :: l4 :: tail, acc.append(shift2))
+                case None =>
+                  throw new IllegalArgumentException("Failed to parse shift from lines")
+        case l1 :: l2 :: Nil =>
+          Shift.parse(List(l1, l2)) match
+            case Some(shift) =>
+              acc.append(shift)
+            case None =>
+              throw new IllegalArgumentException("Failed to parse shift from lines")
+
+        case Nil => acc
+
+        case _ => throw new IllegalArgumentException("Invalid number of lines to parse shifts")
+
+
+    /**
+      * Parse a list of lines representing multiple shifts into a MonthlyWorkReport.
+      * Each shift is represented by 2 or 4 lines.
+      * Shifts are not separated by anything
+      * 
+      * Example input:
+      * IN 17 déc. 2025 à 07:30
+      * OUT 17 déc. 2025 à 12:00
+      * IN 17 déc. 2025 à 12:45
+      * OUT 17 déc. 2025 à 19:45
+      * IN 18 déc. 2025 à 19:30
+      * OUT 19 déc. 2025 à 07:30
+      * IN 21 déc. 2025 à 07:30
+      * OUT 21 déc. 2025 à 12:12
+      * IN 21 déc. 2025 à 12:20
+      * OUT 21 déc. 2025 à 19:30
+      *
+      * @param ls
+      * @return
+      */
+    def parse(ls: List[String]): MonthlyWorkReport =
+      require(ls.nonEmpty, "Input lines cannot be empty")
+      val month = parseMonth(ls.head)
+      val initialReport = MonthlyWorkReport(month, List())
+      parse(ls, initialReport)
+      
+
 
 end WorkHoursAnalyzer
 
 @main def runTests(): Unit =
   Tester.testTotalDurationPerShift()
+  Tester.testMonthlyWorkReportParsing()
   println("All tests passed.")
 
 
@@ -188,7 +294,23 @@ object Tester:
     "OUT 18 déc. 2025 à 07:30"
   )
 
-  val 
+  val exampleMonthlyReportLines = List(
+    "IN 17 déc. 2025 à 07:30",
+    "OUT 17 déc. 2025 à 12:00",
+    "IN 17 déc. 2025 à 12:45",
+    "OUT 17 déc. 2025 à 19:45",
+    "IN 18 déc. 2025 à 19:30",
+    "OUT 19 déc. 2025 à 07:30",
+    "IN 21 déc. 2025 à 07:30",
+    "OUT 21 déc. 2025 à 19:45",
+    "IN 23 déc. 2025 à 19:00",
+    "OUT 24 déc. 2025 à 08:00",
+    "IN 25 déc. 2025 à 07:23",
+    "OUT 25 déc. 2025 à 12:00",
+    "IN 25 déc. 2025 à 12:30",
+    "OUT 25 déc. 2025 à 19:30"
+  )
+
   def testTotalDurationPerShift(): Unit =
     val dayShiftOpt = Shift.parse(exampleDayShiftLines)
 
@@ -202,6 +324,31 @@ object Tester:
     val nightShift = nightShiftOpt.get
     val (nightWorkHours, nightWorkMinutes) = nightShift.totalWorkDuration
     assert(nightWorkHours == 12 && nightWorkMinutes == 0)
+
+  def testMonthlyWorkReportParsing(): Unit =
+    val report = MonthlyWorkReport.parse(exampleMonthlyReportLines)
+    assert(report.month == 12)
+    assert(report.shifts.length == 5)
+    assert(report.shifts.head.dayOfMonth == 17)
+    assert(report.shifts.head.typ == ShiftType.Day)
+
+    assert(report.shifts(1).dayOfMonth == 18)
+    assert(report.shifts(1).typ == ShiftType.Night)
+
+    assert(report.shifts(2).dayOfMonth == 21)
+    assert(report.shifts(2).typ == ShiftType.Day)
+    assert(report.shifts(2).breakStartTime.isEmpty)
+
+    assert(report.shifts(3).dayOfMonth == 23)
+    assert(report.shifts(3).typ == ShiftType.Night)
+
+    assert(report.shifts(4).dayOfMonth == 25)
+    assert(report.shifts(4).typ == ShiftType.Day)
+
+    assert(report.shifts(4).breakStartTime.isDefined)
+
+    val (totalHours, totalMinutes) = report.totalWorkHours
+    assert(totalHours == 60 && totalMinutes == 22)
 
 
 
