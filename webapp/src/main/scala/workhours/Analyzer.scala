@@ -312,11 +312,14 @@ object WorkHoursAnalyzer:
       * @param ls
       * @return
       */
-    def parse(ls: List[String]): MonthlyWorkReport =
+    def parse(ls: List[String]): List[MonthlyWorkReport] =
       require(ls.nonEmpty, "Input lines cannot be empty")
+      val months = ls.map(parseMonth).distinct
       val month = parseMonth(ls.head)
-      val initialReport = MonthlyWorkReport(month, List())
-      parse(ls, initialReport)
+      months.map(m => 
+        val monthLines = ls.filter(line => parseMonth(line) == m)
+        parse(monthLines, MonthlyWorkReport(m, List()))
+      )
 end WorkHoursAnalyzer
 
 // object Utils {
@@ -374,7 +377,17 @@ object Tester:
     "OUT 25 déc. 2025 à 19:30",
     "IN 26 déc. 2025 à 07:30",
     "OUT 27 déc. 2025 à 00:30"
+  )
 
+  val example2MonthlyReportLines = List(
+    "IN 17 janv. 2025 à 07:30",
+    "OUT 17 janv. 2025 à 12:00",
+    "IN 17 janv. 2025 à 12:45",
+    "OUT 17 janv. 2025 à 19:45",
+    "IN 18 janv. 2025 à 19:30",
+    "OUT 19 janv. 2025 à 07:30",
+    "IN 21 janv. 2025 à 07:30",
+    "OUT 21 janv. 2025 à 19:45",
   )
 
   def testTotalDurationPerShift(): Unit =
@@ -390,7 +403,9 @@ object Tester:
     assert(nightShift.totalWorkDuration.hour == 12 && nightShift.totalWorkDuration.minute == 0)
 
   def testMonthlyWorkReportParsing(): Unit =
-    val report = MonthlyWorkReport.parse(exampleMonthlyReportLines)
+    val reports = MonthlyWorkReport.parse(exampleMonthlyReportLines)
+    assert(reports.length == 1)
+    val report = reports.head
     assert(report.month == 12)
     assert(report.shifts.length == 6)
     assert(report.shifts.head.dayOfMonth == 17)
