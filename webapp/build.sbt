@@ -15,7 +15,8 @@ Compile / fullLinkJS / scalaJSLinkerOutputDirectory := baseDirectory.value / "pu
 
 // ES modules so we can use <script type="module">
 Compile / fastLinkJS / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.ESModule))
-Compile / fullLinkJS / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.ESModule))
+Compile / fullLinkJS / scalaJSLinkerConfig ~= (_.withClosureCompilerIfAvailable(false))
+
 
 libraryDependencies ++= Seq(
     "com.raquo" %%% "laminar" % "17.2.1",        // :contentReference[oaicite:9]{index=9}

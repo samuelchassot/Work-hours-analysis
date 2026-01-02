@@ -115,7 +115,7 @@ object App:
       div(
         cls := "container",
         h1("Work Hours Analyzer"),
-        div(cls := "muted", "Paste your IN/OUT lines below (same format as your current parser)."),
+        div(cls := "muted", "Paste your IN/OUT lines below (directly from your note)."),
 
         div(
           cls := "grid",
