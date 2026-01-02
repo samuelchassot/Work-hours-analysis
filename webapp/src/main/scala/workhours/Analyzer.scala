@@ -1,3 +1,5 @@
+package workhours
+
 object WorkHoursAnalyzer:
 
   case class Date(day: Int):
@@ -317,21 +319,21 @@ object WorkHoursAnalyzer:
       parse(ls, initialReport)
 end WorkHoursAnalyzer
 
-object Utils {
-  def openFile(path: String): List[String] = {
-    val source = scala.io.Source.fromFile(path)
-    val lines = source.getLines().toList
-    lines
-  }
-}
+// object Utils {
+//   def openFile(path: String): List[String] = {
+//     val source = scala.io.Source.fromFile(path)
+//     val lines = source.getLines().toList
+//     lines
+//   }
+// }
 
-@main def main(): Unit =
-  runTests()
-  val lines = Utils.openFile("inputZ_01.01.2026.txt")
-  val report = WorkHoursAnalyzer.MonthlyWorkReport.parse(lines)
-  val csvReport = report.generateCSV()
-  println(csvReport)
-  println(f"Total work hours in month ${report.month}: ${report.totalWorkTime.hour} hours and ${report.totalWorkTime.minute} minutes, in ${report.shifts.length} shifts, for a total additional time of ${report.totalAdditionalTime.hour} hours and ${report.totalAdditionalTime.minute} minutes (${report.totalAdditionalTime.toDoubleHours}).")
+// @main def main(): Unit =
+//   runTests()
+//   val lines = Utils.openFile("inputZ_01.01.2026.txt")
+//   val report = WorkHoursAnalyzer.MonthlyWorkReport.parse(lines)
+//   val csvReport = report.generateCSV()
+//   println(csvReport)
+//   println(f"Total work hours in month ${report.month}: ${report.totalWorkTime.hour} hours and ${report.totalWorkTime.minute} minutes, in ${report.shifts.length} shifts, for a total additional time of ${report.totalAdditionalTime.hour} hours and ${report.totalAdditionalTime.minute} minutes (${report.totalAdditionalTime.toDoubleHours}).")
 
 
 
@@ -413,7 +415,5 @@ object Tester:
     assert(report.shifts(5).breakStartTime.isEmpty)
 
     assert(report.totalWorkTime.hour == 77 && report.totalWorkTime.minute == 22)
-
-
 
 end Tester
