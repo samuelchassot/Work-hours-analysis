@@ -9,6 +9,9 @@ final class App // companion class so Scala can emit a static forwarder App.main
 
 object App:
 
+  private val GITHUB_ISSUES_URL: String =
+    "https://github.com/samuelchassot/Work-hours-analysis/issues"
+
   private val exampleInput: String =
     """IN 17 déc. 2025 à 19:25
       |OUT 18 déc. 2025 à 09:01
@@ -97,7 +100,6 @@ object App:
               )
             }
           ),
-          // Overall row
           tfoot(
             tr(
               td(b("All months")),
@@ -181,16 +183,28 @@ object App:
 
   private def reportsView(reports: List[WorkHoursAnalyzer.MonthlyWorkReport]): HtmlElement =
     div(
-      // Top summary (per-month totals + overall)
       perMonthSummaryCard(reports),
-
-      // One card per month (table + CSV actions)
       div(
         marginTop := "12px",
         reports.map { r =>
           div(marginTop := "12px", oneMonthReportCard(r))
         }
       )
+    )
+
+  private def footer: HtmlElement =
+    div(
+      cls := "muted",
+      marginTop := "18px",
+      fontSize := "13px",
+      "If you encountered a bug or want to request a feature, open a new issue on ",
+      a(
+        href := GITHUB_ISSUES_URL,
+        target := "_blank",
+        rel := "noopener noreferrer",
+        "GitHub"
+      ),
+      "."
     )
 
   def main(args: Array[String]): Unit =
@@ -245,7 +259,9 @@ object App:
                   reportsView(reports)
             }
           )
-        )
+        ),
+
+        footer
       )
 
     renderOnDomContentLoaded(
