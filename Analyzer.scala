@@ -3,9 +3,38 @@ object WorkHoursAnalyzer:
   case class Date(day: Int):
     require(1 <= day && day <= 32, "Day must be between 1 and 32") // 32 is used when a night shift spans two months
   case class Time(hour: Int, minute: Int):
-    require(0 <= hour && hour < 24, "Hour must be between 0 and 23")
+    // require(0 <= hour && hour < 24, "Hour must be between 0 and 23")
     require(0 <= minute && minute < 60, "Minute must be between 0 and 59")
+
+    infix def > (other: Time): Boolean =
+      if this.hour != other.hour then
+        this.hour > other.hour
+      else
+        this.minute > other.minute
+
+    infix def + (other: Time): Time =
+      val totalTimeInMinutes = (this.hour + other.hour) * 60 + (this.minute + other.minute)
+      Time.fromMinutes(totalTimeInMinutes)
+
+    infix def - (other: Time): Time =
+      require(this > other, "Cannot subtract a larger Time from a smaller Time")
+      val thisTotalMinutes = this.hour * 60 + this.minute
+      val otherTotalMinutes = other.hour * 60 + other.minute
+      val diffMinutes = thisTotalMinutes - otherTotalMinutes
+      Time.fromMinutes(diffMinutes)
+    
+    def toDoubleHours: Double =
+      hour + minute.toDouble / 60.0
+
+  end Time
+
+  object Time:
+    def fromMinutes(totalMinutes: Int): Time =
+      val hours = totalMinutes / 60
+      val minutes = totalMinutes % 60
+      Time(hours, minutes)
   case class DateTime(date: Date, time: Time):
+    require(time.hour >= 0 && time.hour < 24, "Hour must be between 0 and 23 in DateTime")
     def getDayOfMonth: Int = date.day
     def getHour: Int = time.hour
     def getMinute: Int = time.minute
@@ -17,6 +46,7 @@ object WorkHoursAnalyzer:
         this.time.hour < other.time.hour
       else
         this.time.minute < other.time.minute
+  end DateTime
 
   object DateTime:
     def timeDifferenceMinutes(from: DateTime, to: DateTime): Int = 
@@ -47,7 +77,7 @@ object WorkHoursAnalyzer:
     require(breakStartTime.forall(bs => startTime < bs && bs < endTime), "Break start time must be within shift times")
     require(breakEndTime.forall(be => startTime < be && be < endTime), "Break end time must be within shift times")
     require(breakStartTime.zip(breakEndTime).forall{ case (bs, be) => bs < be }, "Break start time must be before break end time")
-    require(totalWorkDuration._1 * 60 + totalWorkDuration._2 <= 24 * 60, "Total work duration must not exceed 24 hours")
+    require(totalWorkDuration.hour * 60 + totalWorkDuration.minute <= 24 * 60, "Total work duration must not exceed 24 hours")
 
     // We assume that shifts do not span more than 24 hours
     // We define that the day of a shift is determined by its start time
@@ -59,18 +89,26 @@ object WorkHoursAnalyzer:
       *
       * @return
       */
-    def totalWorkDuration: (Int, Int) =
-      val totalDuration = DateTime.timeDifferenceMinutes(startTime, endTime)
-      val breakDuration = (breakStartTime, breakEndTime) match
+    def totalWorkDuration: Time =
+      val totalDurationMinutes = DateTime.timeDifferenceMinutes(startTime, endTime)
+      val breakDurationMinutes = (breakStartTime, breakEndTime) match
         case (Some(bs), Some(be)) => DateTime.timeDifferenceMinutes(bs, be)
         case _ => 0
-      val workDuration = totalDuration - breakDuration
-      val hours = workDuration / 60
-      val minutes = workDuration % 60
-      (hours, minutes)
+      val workDurationMinutes = totalDurationMinutes - breakDurationMinutes
+      Time.fromMinutes(workDurationMinutes)
 
     infix def < (other: Shift): Boolean =
       this.startTime < other.startTime
+
+    /**
+     * Calculate additional time worked beyond official shift duration.
+     * @return
+     */
+    def additionalTime(): Time = 
+      if totalWorkDuration > Shift.shiftOfficialDurationTime(typ) then
+        totalWorkDuration - Shift.shiftOfficialDurationTime(typ)
+      else
+        Time(0, 0)
 
   end Shift
   object Shift:
@@ -140,6 +178,11 @@ object WorkHoursAnalyzer:
             assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
             Some(Shift(typ, startTime, None, None, endTime))
         case _ => None
+    
+    def shiftOfficialDurationTime(typ: ShiftType): Time =
+      typ match
+        case ShiftType.Day => Time(11, 0)   // 1 hour lunch break
+        case ShiftType.Night => Time(12, 0) // No break officially
 
   
   case class MonthlyWorkReport(month: Int, shifts: List[Shift]):
@@ -151,14 +194,16 @@ object WorkHoursAnalyzer:
       *
       * @return
       */
-    def totalWorkHours: (Int, Int) =
+    def totalWorkTime: Time =
       val totalMinutes = shifts.map { shift =>
-        val (hours, minutes) = shift.totalWorkDuration
-        hours * 60 + minutes
+        val time = shift.totalWorkDuration
+        time.hour * 60 + time.minute
       }.sum
-      val totalHours = totalMinutes / 60
-      val remainingMinutes = totalMinutes % 60
-      (totalHours, remainingMinutes)
+      Time.fromMinutes(totalMinutes)
+
+    
+    def totalAdditionalTime: Time = 
+      shifts.map(_.additionalTime()).foldLeft(Time(0,0))(_ + _)
 
     /**
      * Generate a CSV report of the shifts.
@@ -170,12 +215,13 @@ object WorkHoursAnalyzer:
       * @return
       */
     def generateCSV(): String = 
-      val header = "Day,Shift Type,Start Time,Break Start Time,Break End Time,End Time,Total Work Duration\n"
+      val header = "Month,Day,Shift Type,Start Time,Break Start Time,Break End Time,End Time,Total Work Duration,Additional Time\n"
       val lines = shifts.map { shift =>
-        val (workHours, workMinutes) = shift.totalWorkDuration
+        val workTime = shift.totalWorkDuration
         val breakStartStr = shift.breakStartTime.map(dt => f"${dt.getHour}%02d:${dt.getMinute}%02d").getOrElse("")
         val breakEndStr = shift.breakEndTime.map(dt => f"${dt.getHour}%02d:${dt.getMinute}%02d").getOrElse("")
-        s"${shift.dayOfMonth},${shift.typ},${f"${shift.startTime.getHour}%02d:${shift.startTime.getMinute}%02d"},$breakStartStr,$breakEndStr,${f"${shift.endTime.getHour}%02d:${shift.endTime.getMinute}%02d"},${f"$workHours%02d:$workMinutes%02d"}"
+        val addTime = shift.additionalTime()
+        s"${month},${shift.dayOfMonth},${shift.typ},${f"${shift.startTime.getHour}%02d:${shift.startTime.getMinute}%02d"},$breakStartStr,$breakEndStr,${f"${shift.endTime.getHour}%02d:${shift.endTime.getMinute}%02d"},${f"${workTime.hour}%02d:${workTime.minute}%02d"},${f"${addTime.hour}%02d:${addTime.minute}%02d"}"
       }
       header + lines.mkString("\n")
 
@@ -269,12 +315,27 @@ object WorkHoursAnalyzer:
       val month = parseMonth(ls.head)
       val initialReport = MonthlyWorkReport(month, List())
       parse(ls, initialReport)
-      
-
-
 end WorkHoursAnalyzer
 
-@main def runTests(): Unit =
+object Utils {
+  def openFile(path: String): List[String] = {
+    val source = scala.io.Source.fromFile(path)
+    val lines = source.getLines().toList
+    lines
+  }
+}
+
+@main def main(): Unit =
+  runTests()
+  val lines = Utils.openFile("inputZ_01.01.2026.txt")
+  val report = WorkHoursAnalyzer.MonthlyWorkReport.parse(lines)
+  val csvReport = report.generateCSV()
+  println(csvReport)
+  println(f"Total work hours in month ${report.month}: ${report.totalWorkTime.hour} hours and ${report.totalWorkTime.minute} minutes, in ${report.shifts.length} shifts, for a total additional time of ${report.totalAdditionalTime.hour} hours and ${report.totalAdditionalTime.minute} minutes (${report.totalAdditionalTime.toDoubleHours}).")
+
+
+
+def runTests(): Unit =
   Tester.testTotalDurationPerShift()
   Tester.testMonthlyWorkReportParsing()
   println("All tests passed.")
@@ -308,7 +369,10 @@ object Tester:
     "IN 25 déc. 2025 à 07:23",
     "OUT 25 déc. 2025 à 12:00",
     "IN 25 déc. 2025 à 12:30",
-    "OUT 25 déc. 2025 à 19:30"
+    "OUT 25 déc. 2025 à 19:30",
+    "IN 26 déc. 2025 à 07:30",
+    "OUT 27 déc. 2025 à 00:30"
+
   )
 
   def testTotalDurationPerShift(): Unit =
@@ -316,19 +380,17 @@ object Tester:
 
     assert(dayShiftOpt.isDefined)
     val dayShift = dayShiftOpt.get
-    val (workHours, workMinutes) = dayShift.totalWorkDuration
-    assert(workHours == 11 && workMinutes == 30)
+    assert(dayShift.totalWorkDuration.hour == 11 && dayShift.totalWorkDuration.minute == 30)
 
     val nightShiftOpt = Shift.parse(exampleNightShiftLines)
     assert(nightShiftOpt.isDefined)
     val nightShift = nightShiftOpt.get
-    val (nightWorkHours, nightWorkMinutes) = nightShift.totalWorkDuration
-    assert(nightWorkHours == 12 && nightWorkMinutes == 0)
+    assert(nightShift.totalWorkDuration.hour == 12 && nightShift.totalWorkDuration.minute == 0)
 
   def testMonthlyWorkReportParsing(): Unit =
     val report = MonthlyWorkReport.parse(exampleMonthlyReportLines)
     assert(report.month == 12)
-    assert(report.shifts.length == 5)
+    assert(report.shifts.length == 6)
     assert(report.shifts.head.dayOfMonth == 17)
     assert(report.shifts.head.typ == ShiftType.Day)
 
@@ -345,10 +407,12 @@ object Tester:
     assert(report.shifts(4).dayOfMonth == 25)
     assert(report.shifts(4).typ == ShiftType.Day)
 
-    assert(report.shifts(4).breakStartTime.isDefined)
+    assert(report.shifts(5).dayOfMonth == 26)
+    assert(report.shifts(5).typ == ShiftType.Day)
 
-    val (totalHours, totalMinutes) = report.totalWorkHours
-    assert(totalHours == 60 && totalMinutes == 22)
+    assert(report.shifts(5).breakStartTime.isEmpty)
+
+    assert(report.totalWorkTime.hour == 77 && report.totalWorkTime.minute == 22)
 
 
 
