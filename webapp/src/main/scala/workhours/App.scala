@@ -56,16 +56,33 @@ object App:
     else
       Try(WorkHoursAnalyzer.MonthlyWorkReport.parse(lines)).toEither.left.map { e =>
         s"Parse error: ${e.getMessage}"
-      }.map { reports =>
-        reports.sortBy(_.month)
-      }
+      }.map(_.sortBy(_.month))
 
   private def csvDataUri(csv: String): String =
     "data:text/csv;charset=utf-8," + js.URIUtils.encodeURIComponent(csv)
 
-  private def perMonthSummaryCard(reports: List[WorkHoursAnalyzer.MonthlyWorkReport]): HtmlElement =
+  // -------- Official duration parsing (HH:MM) --------
+
+  private def parseHHMM(s: String): Option[WorkHoursAnalyzer.Time] =
+    val trimmed = s.trim
+    val parts = trimmed.split(":")
+    if parts.length != 2 then None
+    else
+      val hOpt = Try(parts(0).trim.toInt).toOption
+      val mOpt = Try(parts(1).trim.toInt).toOption
+      (hOpt, mOpt) match
+        case (Some(h), Some(m)) if 0 <= h && h <= 24 && 0 <= m && m < 60 =>
+          Some(WorkHoursAnalyzer.Time(h, m))
+        case _ => None
+
+  // -------- Views (depend on official map) --------
+
+  private def perMonthSummaryCard(
+    reports: List[WorkHoursAnalyzer.MonthlyWorkReport],
+    official: Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]
+  ): HtmlElement =
     val overallWorkMins = reports.map(r => timeToMinutes(r.totalWorkTime)).sum
-    val overallAddMins  = reports.map(r => timeToMinutes(r.totalAdditionalTime)).sum
+    val overallAddMins  = reports.map(r => timeToMinutes(r.totalAdditionalTime(official))).sum
     val overallShifts   = reports.map(_.shifts.length).sum
 
     div(
@@ -96,7 +113,7 @@ object App:
                 td(f"${monthName(r.month)} (${r.month})"),
                 td(r.shifts.length.toString),
                 td(hhmm(r.totalWorkTime)),
-                td(hhmm(r.totalAdditionalTime))
+                td(hhmm(r.totalAdditionalTime(official)))
               )
             }
           ),
@@ -112,10 +129,13 @@ object App:
       )
     )
 
-  private def oneMonthReportCard(report: WorkHoursAnalyzer.MonthlyWorkReport): HtmlElement =
+  private def oneMonthReportCard(
+    report: WorkHoursAnalyzer.MonthlyWorkReport,
+    official: Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]
+  ): HtmlElement =
     val total = report.totalWorkTime
-    val add   = report.totalAdditionalTime
-    val csv   = report.generateCSV()
+    val add   = report.totalAdditionalTime(official)
+    val csv   = report.generateCSV(official)
 
     div(
       cls := "card",
@@ -164,7 +184,7 @@ object App:
           tbody(
             report.shifts.map { s =>
               val work = s.totalWorkDuration
-              val addt = s.additionalTime()
+              val addt = s.additionalTime(official)
               tr(
                 td(s.dayOfMonth.toString),
                 td(s.typ.toString),
@@ -181,33 +201,163 @@ object App:
       )
     )
 
-  private def reportsView(reports: List[WorkHoursAnalyzer.MonthlyWorkReport]): HtmlElement =
+  private def reportsView(
+    reports: List[WorkHoursAnalyzer.MonthlyWorkReport],
+    official: Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]
+  ): HtmlElement =
     div(
-      perMonthSummaryCard(reports),
+      perMonthSummaryCard(reports, official),
       div(
         marginTop := "12px",
         reports.map { r =>
-          div(marginTop := "12px", oneMonthReportCard(r))
+          div(marginTop := "12px", oneMonthReportCard(r, official))
         }
       )
     )
 
   private def footer: HtmlElement =
+    val year = "2026"
+
     div(
       cls := "muted",
       marginTop := "18px",
       fontSize := "13px",
-      "If you encountered a bug or want to request a feature, open a new issue on ",
-      a(
-        href := GITHUB_ISSUES_URL,
-        target := "_blank",
-        rel := "noopener noreferrer",
-        "GitHub"
+
+      div(
+        "If you encountered a bug or want to request a feature, open a new issue on ",
+        a(
+          href := GITHUB_ISSUES_URL,
+          target := "_blank",
+          rel := "noopener noreferrer",
+          "GitHub"
+        ),
+        "."
       ),
-      "."
+
+      div(marginTop := "6px", s"© $year Samuel Chassot. All rights reserved.")
+    )
+
+
+  // -------- Official durations UI (generic) --------
+
+  private def officialDurationsCard(
+    shiftTypes: List[WorkHoursAnalyzer.ShiftType],
+    defaultDurations: Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time],
+    enabledVars: Map[WorkHoursAnalyzer.ShiftType, Var[Boolean]],
+    durationTextVars: Map[WorkHoursAnalyzer.ShiftType, Var[String]],
+    errorVars: Map[WorkHoursAnalyzer.ShiftType, Var[Option[String]]],
+    officialMapVar: Var[Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]]
+  ): HtmlElement =
+
+    def defaultFor(t: WorkHoursAnalyzer.ShiftType): WorkHoursAnalyzer.Time =
+      defaultDurations.getOrElse(t, WorkHoursAnalyzer.Time(8, 0)) // safe fallback
+
+    def recomputeOfficialMap(): Unit =
+      val m = shiftTypes.flatMap { t =>
+        if enabledVars(t).now() then
+          val txt = durationTextVars(t).now()
+          val parsedOrDefault = parseHHMM(txt).getOrElse(defaultFor(t))
+          Some(t -> parsedOrDefault)
+        else None
+      }.toMap
+      officialMapVar.set(m)
+
+    div(
+      cls := "card",
+      div(cls := "muted", "Official shift durations (used to compute “Additional”)."),
+      div(
+        cls := "muted",
+        marginTop := "6px",
+        "Enable a type to override its official duration. Format: HH:MM. “Reset to default” restores the analyzer default for that type."
+      ),
+
+      div(marginTop := "12px",
+        shiftTypes.map { t =>
+          val enVar   = enabledVars(t)
+          val txtVar  = durationTextVars(t)
+          val errVar  = errorVars(t)
+          val defStr  = hhmm(defaultFor(t))
+
+          div(
+            marginTop := "10px",
+
+            div(
+              cls := "row",
+
+              label(
+                cls := "muted",
+                input(
+                  typ := "checkbox",
+                  checked <-- enVar.signal,
+                  onInput.mapToChecked --> { checked =>
+                    enVar.set(checked)
+                    recomputeOfficialMap()
+                  }
+                ),
+                span(marginLeft := "8px", t.toString),
+                span(marginLeft := "8px", cls := "muted", s"(default $defStr)")
+              ),
+
+              input(
+                typ := "text",
+                width := "110px",
+                placeholder := "HH:MM",
+                value <-- txtVar.signal,
+                disabled <-- enVar.signal.map(en => !en),
+                onInput.mapToValue --> { s =>
+                  txtVar.set(s)
+                  if s.trim.isEmpty then
+                    errVar.set(Some("Required (HH:MM)"))
+                  else if parseHHMM(s).isEmpty then
+                    errVar.set(Some("Invalid (use HH:MM)"))
+                  else
+                    errVar.set(None)
+
+                  recomputeOfficialMap()
+                }
+              ),
+
+              button(
+                "Reset to default",
+                disabled <-- enVar.signal.map(en => !en),
+                onClick --> { _ =>
+                  txtVar.set(defStr)
+                  errVar.set(None)
+                  recomputeOfficialMap()
+                }
+              )
+            ),
+
+            child <-- Signal.combine(enVar.signal, errVar.signal).map {
+              case (false, _) => emptyNode
+              case (true, Some(msg)) => div(cls := "error", marginTop := "6px", msg)
+              case (true, None) => emptyNode
+            }
+          )
+        }
+      )
     )
 
   def main(args: Array[String]): Unit =
+    val shiftTypes = WorkHoursAnalyzer.ShiftType.getAllTypes()
+    val defaultDurations = WorkHoursAnalyzer.ShiftType.defaultOfficialDuration()
+
+    val enabledVars: Map[WorkHoursAnalyzer.ShiftType, Var[Boolean]] =
+      shiftTypes.map(t => t -> Var(false)).toMap
+
+    // Initialize each type's text box to its analyzer default (fallback to 08:00 if absent)
+    def defaultFor(t: WorkHoursAnalyzer.ShiftType): WorkHoursAnalyzer.Time =
+      defaultDurations.getOrElse(t, WorkHoursAnalyzer.Time(8, 0))
+
+    val durationTextVars: Map[WorkHoursAnalyzer.ShiftType, Var[String]] =
+      shiftTypes.map(t => t -> Var(hhmm(defaultFor(t)))).toMap
+
+    val errorVars: Map[WorkHoursAnalyzer.ShiftType, Var[Option[String]]] =
+      shiftTypes.map(t => t -> Var[Option[String]](None)).toMap
+
+    val officialMapVar =
+      Var[Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]](Map.empty)
+
     val inputVar  = Var[String]("")
     val resultVar = Var[Either[String, List[WorkHoursAnalyzer.MonthlyWorkReport]]](
       Left("Paste your input and click “Generate report”.")
@@ -221,42 +371,59 @@ object App:
 
         div(
           cls := "grid",
+
+          // LEFT column
           div(
-            cls := "card",
-            textArea(
-              placeholder := "IN 17 déc. 2025 à 19:25\nOUT 18 déc. 2025 à 09:01\n...",
-              value <-- inputVar.signal,
-              onInput.mapToValue --> inputVar
+            officialDurationsCard(
+              shiftTypes = shiftTypes,
+              defaultDurations = defaultDurations,
+              enabledVars = enabledVars,
+              durationTextVars = durationTextVars,
+              errorVars = errorVars,
+              officialMapVar = officialMapVar
             ),
-            div(cls := "row", marginTop := "10px",
-              button(
-                "Generate report",
-                onClick --> { _ => resultVar.set(parseInput(inputVar.now())) }
+
+            div(
+              marginTop := "12px",
+              cls := "card",
+              textArea(
+                placeholder := "IN 17 déc. 2025 à 19:25\nOUT 18 déc. 2025 à 09:01\n...",
+                value <-- inputVar.signal,
+                onInput.mapToValue --> inputVar
               ),
-              button(
-                "Load example",
-                onClick --> { _ =>
-                  inputVar.set(exampleInput)
-                  resultVar.set(parseInput(exampleInput))
-                }
+              div(cls := "row", marginTop := "10px",
+                button(
+                  "Generate report",
+                  onClick --> { _ => resultVar.set(parseInput(inputVar.now())) }
+                ),
+                button(
+                  "Load example",
+                  onClick --> { _ =>
+                    inputVar.set(exampleInput)
+                    resultVar.set(parseInput(exampleInput))
+                  }
+                )
               )
             )
           ),
+
+          // RIGHT column (depends on parse results AND official durations)
           div(
-            child <-- resultVar.signal.map {
-              case Left(msg) =>
+            child <-- Signal.combine(resultVar.signal, officialMapVar.signal).map {
+              case (Left(msg), _) =>
                 div(cls := "card",
                   div(cls := "muted", "Status"),
                   div(marginTop := "10px", cls := "error", msg)
                 )
-              case Right(reports) =>
+
+              case (Right(reports), official) =>
                 if reports.isEmpty then
                   div(cls := "card",
                     div(cls := "muted", "Status"),
                     div(marginTop := "10px", cls := "error", "No report produced (no shifts parsed).")
                   )
                 else
-                  reportsView(reports)
+                  reportsView(reports, official)
             }
           )
         ),

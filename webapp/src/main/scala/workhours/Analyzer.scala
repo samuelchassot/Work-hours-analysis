@@ -61,6 +61,14 @@ object WorkHoursAnalyzer:
   enum ShiftType:
     case Day
     case Night
+
+  object ShiftType:
+    def getAllTypes(): List[ShiftType] = List(ShiftType.Day, ShiftType.Night)
+    def defaultOfficialDuration(): Map[ShiftType, Time] =
+      Map(
+        ShiftType.Day -> Time(11, 0),
+        ShiftType.Night -> Time(12, 0)
+      )
   
   /**
     * Represents a work shift with start and end times, including optional break times.
@@ -104,11 +112,12 @@ object WorkHoursAnalyzer:
 
     /**
      * Calculate additional time worked beyond official shift duration.
+     * If the shift official duration is not provided for the shift type, defaults to 8 hours.
      * @return
      */
-    def additionalTime(): Time = 
-      if totalWorkDuration > Shift.shiftOfficialDurationTime(typ) then
-        totalWorkDuration - Shift.shiftOfficialDurationTime(typ)
+    def additionalTime(shiftOfficialDurationTime: Map[ShiftType, Time] = Map()): Time = 
+      if totalWorkDuration > shiftOfficialDurationTime.getOrElse(typ, Time(8, 0)) then
+        totalWorkDuration - shiftOfficialDurationTime.getOrElse(typ, Time(8, 0))
       else
         Time(0, 0)
 
@@ -180,11 +189,6 @@ object WorkHoursAnalyzer:
             assert(if typ == ShiftType.Night then endTime.getDayOfMonth == startTime.getDayOfMonth + 1 else true)
             Some(Shift(typ, startTime, None, None, endTime))
         case _ => None
-    
-    def shiftOfficialDurationTime(typ: ShiftType): Time =
-      typ match
-        case ShiftType.Day => Time(11, 0)   // 1 hour lunch break
-        case ShiftType.Night => Time(12, 0) // No break officially
 
   
   case class MonthlyWorkReport(month: Int, shifts: List[Shift]):
@@ -204,8 +208,8 @@ object WorkHoursAnalyzer:
       Time.fromMinutes(totalMinutes)
 
     
-    def totalAdditionalTime: Time = 
-      shifts.map(_.additionalTime()).foldLeft(Time(0,0))(_ + _)
+    def totalAdditionalTime(shiftOfficialDurationTime: Map[ShiftType, Time] = Map()): Time = 
+      shifts.map(_.additionalTime(shiftOfficialDurationTime)).foldLeft(Time(0,0))(_ + _)
 
     /**
      * Generate a CSV report of the shifts.
@@ -216,13 +220,13 @@ object WorkHoursAnalyzer:
       *
       * @return
       */
-    def generateCSV(): String = 
+    def generateCSV(shiftOfficialDurationTime: Map[ShiftType, Time] = Map()): String = 
       val header = "Month,Day,Shift Type,Start Time,Break Start Time,Break End Time,End Time,Total Work Duration,Additional Time\n"
       val lines = shifts.map { shift =>
         val workTime = shift.totalWorkDuration
         val breakStartStr = shift.breakStartTime.map(dt => f"${dt.getHour}%02d:${dt.getMinute}%02d").getOrElse("")
         val breakEndStr = shift.breakEndTime.map(dt => f"${dt.getHour}%02d:${dt.getMinute}%02d").getOrElse("")
-        val addTime = shift.additionalTime()
+        val addTime = shift.additionalTime(shiftOfficialDurationTime)
         s"${month},${shift.dayOfMonth},${shift.typ},${f"${shift.startTime.getHour}%02d:${shift.startTime.getMinute}%02d"},$breakStartStr,$breakEndStr,${f"${shift.endTime.getHour}%02d:${shift.endTime.getMinute}%02d"},${f"${workTime.hour}%02d:${workTime.minute}%02d"},${f"${addTime.hour}%02d:${addTime.minute}%02d"}"
       }
       header + lines.mkString("\n")
