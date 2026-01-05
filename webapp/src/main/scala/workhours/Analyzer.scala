@@ -270,7 +270,7 @@ object WorkHoursAnalyzer:
     
     private def parse(ls: List[String], acc: MonthlyWorkReport): MonthlyWorkReport =
       require(ls.forall(line => line.startsWith("IN") || line.startsWith("OUT")), "All lines must start with IN or OUT")
-      require(ls.forall(line =>parseMonth(line) == acc.month), "All lines must belong to the same month")
+      require(ls.forall(line => parseMonth(line) == acc.month), "All lines must belong to the same month")
       // Algo: if more than 4 lines left, try to parse 4 lines, if fails, try to parse 2 lines
       ls match
         case l1 :: l2 :: l3 :: l4 :: tail => 
