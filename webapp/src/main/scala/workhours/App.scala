@@ -217,7 +217,6 @@ object App:
 
   private def footer: HtmlElement =
     val year = "2026"
-
     div(
       cls := "muted",
       marginTop := "18px",
@@ -237,30 +236,17 @@ object App:
       div(marginTop := "6px", s"© $year Samuel Chassot. All rights reserved.")
     )
 
-
-  // -------- Official durations UI (generic) --------
+  // -------- Official durations UI (no checkbox; always used) --------
 
   private def officialDurationsCard(
     shiftTypes: List[WorkHoursAnalyzer.ShiftType],
     defaultDurations: Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time],
-    enabledVars: Map[WorkHoursAnalyzer.ShiftType, Var[Boolean]],
     durationTextVars: Map[WorkHoursAnalyzer.ShiftType, Var[String]],
-    errorVars: Map[WorkHoursAnalyzer.ShiftType, Var[Option[String]]],
     officialMapVar: Var[Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]]
   ): HtmlElement =
 
     def defaultFor(t: WorkHoursAnalyzer.ShiftType): WorkHoursAnalyzer.Time =
       defaultDurations.getOrElse(t, WorkHoursAnalyzer.Time(8, 0)) // safe fallback
-
-    def recomputeOfficialMap(): Unit =
-      val m = shiftTypes.flatMap { t =>
-        if enabledVars(t).now() then
-          val txt = durationTextVars(t).now()
-          val parsedOrDefault = parseHHMM(txt).getOrElse(defaultFor(t))
-          Some(t -> parsedOrDefault)
-        else None
-      }.toMap
-      officialMapVar.set(m)
 
     div(
       cls := "card",
@@ -268,95 +254,65 @@ object App:
       div(
         cls := "muted",
         marginTop := "6px",
-        "Enable a type to override its official duration. Format: HH:MM. “Reset to default” restores the analyzer default for that type."
+        "These values are always used. Format: HH:MM."
       ),
 
       div(marginTop := "12px",
         shiftTypes.map { t =>
-          val enVar   = enabledVars(t)
-          val txtVar  = durationTextVars(t)
-          val errVar  = errorVars(t)
-          val defStr  = hhmm(defaultFor(t))
+          val txtVar = durationTextVars(t)
+          val defT   = defaultFor(t)
+          val defStr = hhmm(defT)
 
           div(
             marginTop := "10px",
 
             div(
               cls := "row",
+              span(cls := "muted", width := "90px", t.toString),
 
-              label(
-                cls := "muted",
-                input(
-                  typ := "checkbox",
-                  checked <-- enVar.signal,
-                  onInput.mapToChecked --> { checked =>
-                    enVar.set(checked)
-                    recomputeOfficialMap()
-                  }
-                ),
-                span(marginLeft := "8px", t.toString),
-                span(marginLeft := "8px", cls := "muted", s"(default $defStr)")
-              ),
-
+              // type="time" ensures a valid HH:MM UI across browsers
               input(
-                typ := "text",
-                width := "110px",
-                placeholder := "HH:MM",
+                typ := "time",
+                width := "120px",
                 value <-- txtVar.signal,
-                disabled <-- enVar.signal.map(en => !en),
                 onInput.mapToValue --> { s =>
                   txtVar.set(s)
-                  if s.trim.isEmpty then
-                    errVar.set(Some("Required (HH:MM)"))
-                  else if parseHHMM(s).isEmpty then
-                    errVar.set(Some("Invalid (use HH:MM)"))
-                  else
-                    errVar.set(None)
-
-                  recomputeOfficialMap()
+                  // With type="time", s should always parse; still guard for safety
+                  parseHHMM(s).foreach { parsed =>
+                    officialMapVar.set(officialMapVar.now().updated(t, parsed))
+                  }
                 }
               ),
 
               button(
                 "Reset to default",
-                disabled <-- enVar.signal.map(en => !en),
                 onClick --> { _ =>
                   txtVar.set(defStr)
-                  errVar.set(None)
-                  recomputeOfficialMap()
+                  officialMapVar.set(officialMapVar.now().updated(t, defT))
                 }
-              )
-            ),
+              ),
 
-            child <-- Signal.combine(enVar.signal, errVar.signal).map {
-              case (false, _) => emptyNode
-              case (true, Some(msg)) => div(cls := "error", marginTop := "6px", msg)
-              case (true, None) => emptyNode
-            }
+              span(marginLeft := "8px", cls := "muted", s"(default $defStr)")
+            )
           )
         }
       )
     )
 
   def main(args: Array[String]): Unit =
-    val shiftTypes = WorkHoursAnalyzer.ShiftType.getAllTypes()
-    val defaultDurations = WorkHoursAnalyzer.ShiftType.defaultOfficialDuration()
+    val shiftTypes        = WorkHoursAnalyzer.ShiftType.getAllTypes()
+    val defaultDurations  = WorkHoursAnalyzer.ShiftType.defaultOfficialDuration()
 
-    val enabledVars: Map[WorkHoursAnalyzer.ShiftType, Var[Boolean]] =
-      shiftTypes.map(t => t -> Var(false)).toMap
-
-    // Initialize each type's text box to its analyzer default (fallback to 08:00 if absent)
     def defaultFor(t: WorkHoursAnalyzer.ShiftType): WorkHoursAnalyzer.Time =
-      defaultDurations.getOrElse(t, WorkHoursAnalyzer.Time(8, 0))
+      defaultDurations.getOrElse(t, WorkHoursAnalyzer.Time(8, 0)) // safe fallback
 
+    // Text shown in the UI
     val durationTextVars: Map[WorkHoursAnalyzer.ShiftType, Var[String]] =
       shiftTypes.map(t => t -> Var(hhmm(defaultFor(t)))).toMap
 
-    val errorVars: Map[WorkHoursAnalyzer.ShiftType, Var[Option[String]]] =
-      shiftTypes.map(t => t -> Var[Option[String]](None)).toMap
-
-    val officialMapVar =
-      Var[Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]](Map.empty)
+    // Map actually used for computation (IMPORTANT: initialize with defaults for all types)
+    val officialMapVar: Var[Map[WorkHoursAnalyzer.ShiftType, WorkHoursAnalyzer.Time]] =
+      Var(shiftTypes.map(t => t -> defaultFor(t)).toMap)
 
     val inputVar  = Var[String]("")
     val resultVar = Var[Either[String, List[WorkHoursAnalyzer.MonthlyWorkReport]]](
@@ -377,9 +333,7 @@ object App:
             officialDurationsCard(
               shiftTypes = shiftTypes,
               defaultDurations = defaultDurations,
-              enabledVars = enabledVars,
               durationTextVars = durationTextVars,
-              errorVars = errorVars,
               officialMapVar = officialMapVar
             ),
 
